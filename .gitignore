@@ -1,4 +1,3 @@
-# o .env do lab tem so senhas de laboratorio; remova esta linha se quiser versionar
 .env
-*.log
+.log
 backups/
