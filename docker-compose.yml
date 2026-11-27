@@ -87,6 +87,7 @@ services:
     image: zabbix/zabbix-agent2:${ZBX_AGENT_TAG}
     container_name: zbx-agent-a
     restart: unless-stopped
+    depends_on: [proxy-ativo]
     environment:
       ZBX_HOSTNAME: agent-a
       ZBX_SERVER_HOST: proxy-ativo
@@ -96,9 +97,71 @@ services:
     image: zabbix/zabbix-agent2:${ZBX_AGENT_TAG}
     container_name: zbx-agent-p
     restart: unless-stopped
+    depends_on: [proxy-passivo]
     environment:
       ZBX_HOSTNAME: agent-p
       ZBX_SERVER_HOST: proxy-passivo
+    networks: [zbx-net]
+
+  # =====================================================================
+  # SIMULACAO DO AMBIENTE DE TRABALHO
+  # Citrix -> Jenkins (bastion) -> ssh -> proxies instalados via pacote
+  # ATENCAO: estes containers sao "VMs". Upgrades feitos via apt/dnf ficam
+  # dentro do container. Recriar o container (build / --force-recreate)
+  # equivale a reinstalar a VM do zero em 6.0.46.
+  # =====================================================================
+  jenkins:
+    build: { context: ./vms, dockerfile: jenkins.Dockerfile }
+    image: zbx-lab/jenkins-bastion
+    container_name: zbx-jenkins
+    hostname: jenkins
+    restart: unless-stopped
+    ports:
+      - "2222:22"          # ssh -p 2222 ops@localhost  (senha: lab)
+    networks: [zbx-net]
+
+  proxy-ubuntu:
+    build:
+      context: ./vms
+      dockerfile: ubuntu.Dockerfile
+      args: { ZBX_VERSION: "6.0.46", PROXY_NAME: proxy-ubuntu, PROXY_MODE: "0" }
+    image: zbx-lab/proxy-ubuntu
+    container_name: zbx-proxy-ubuntu
+    hostname: proxy-ubuntu
+    restart: unless-stopped
+    depends_on: [zabbix-server]
+    networks: [zbx-net]
+
+  proxy-oracle:
+    build:
+      context: ./vms
+      dockerfile: oracle.Dockerfile
+      args: { ZBX_VERSION: "6.0.46", PROXY_NAME: proxy-oracle, PROXY_MODE: "1" }
+    image: zbx-lab/proxy-oracle
+    container_name: zbx-proxy-oracle
+    hostname: proxy-oracle
+    restart: unless-stopped
+    depends_on: [zabbix-server]
+    networks: [zbx-net]
+
+  agent-u:
+    image: zabbix/zabbix-agent2:${ZBX_AGENT_TAG}
+    container_name: zbx-agent-u
+    restart: unless-stopped
+    depends_on: [proxy-ubuntu]
+    environment:
+      ZBX_HOSTNAME: agent-u
+      ZBX_SERVER_HOST: proxy-ubuntu
+    networks: [zbx-net]
+
+  agent-o:
+    image: zabbix/zabbix-agent2:${ZBX_AGENT_TAG}
+    container_name: zbx-agent-o
+    restart: unless-stopped
+    depends_on: [proxy-oracle]
+    environment:
+      ZBX_HOSTNAME: agent-o
+      ZBX_SERVER_HOST: proxy-oracle
     networks: [zbx-net]
 
 volumes:

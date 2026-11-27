@@ -1,0 +1,96 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# systemctl SIMULADO para o lab.
+# Container nao tem systemd, entao este script imita o basico do systemctl
+# para o servico zabbix-proxy, permitindo usar os mesmos comandos do dia a dia:
+#   sudo systemctl start|stop|restart|status|enable|disable|is-active zabbix-proxy
+# ---------------------------------------------------------------------------
+CONF=/etc/zabbix/zabbix_proxy.conf
+BIN=/usr/sbin/zabbix_proxy
+STATE=/var/lib/lab-systemctl
+
+cfg() { grep -E "^[[:space:]]*$1=" "$CONF" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]'; }
+pidfile() { local p; p=$(cfg PidFile); echo "${p:-/tmp/zabbix_proxy.pid}"; }
+logfile() { local l; l=$(cfg LogFile); echo "${l:-/tmp/zabbix_proxy.log}"; }
+mainpid() { local f; f=$(pidfile); [ -f "$f" ] && cat "$f"; }
+running() { local p; p=$(mainpid); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+enabled() { [ -f "$STATE/zabbix-proxy.enabled" ]; }
+need_root() {
+    if [ "$(id -u)" != 0 ]; then
+        echo "Failed to $1 zabbix-proxy.service: Access denied" >&2
+        echo "(dica: use sudo)" >&2
+        exit 4
+    fi
+}
+
+do_start() {
+    need_root start
+    running && return 0
+    if [ ! -x "$BIN" ]; then
+        echo "Failed to start zabbix-proxy.service: Unit zabbix-proxy.service not found." >&2
+        return 5
+    fi
+    mkdir -p /run/zabbix "$(dirname "$(logfile)")" /var/lib/zabbix
+    chown zabbix:zabbix /run/zabbix "$(dirname "$(logfile)")" /var/lib/zabbix 2>/dev/null
+    rm -f "$(pidfile)"
+    "$BIN" -c "$CONF"
+    for _ in $(seq 1 10); do running && return 0; sleep 1; done
+    echo "Job for zabbix-proxy.service failed because the control process exited with error code." >&2
+    echo "See \"systemctl status zabbix-proxy.service\" and $(logfile) for details." >&2
+    return 1
+}
+
+do_stop() {
+    need_root stop
+    running || return 0
+    local p; p=$(mainpid)
+    kill -TERM "$p"
+    for _ in $(seq 1 60); do kill -0 "$p" 2>/dev/null || { rm -f "$(pidfile)"; return 0; }; sleep 1; done
+    echo "zabbix-proxy nao parou em 60s, enviando SIGKILL" >&2
+    kill -KILL "$p" 2>/dev/null; rm -f "$(pidfile)"
+}
+
+do_status() {
+    local en="disabled"; enabled && en="enabled"
+    if running; then
+        local p since
+        p=$(mainpid)
+        since=$(date -r "$(pidfile)" '+%a %Y-%m-%d %H:%M:%S %Z')
+        echo -e "\e[32m●\e[0m zabbix-proxy.service - Zabbix Proxy"
+        echo "     Loaded: loaded (/lib/systemd/system/zabbix-proxy.service; $en)"
+        echo -e "     Active: \e[32mactive (running)\e[0m since $since"
+        echo "   Main PID: $p (zabbix_proxy)"
+        echo "      Tasks: $(pgrep -c -f "$BIN" 2>/dev/null || echo '?')"
+    else
+        echo "○ zabbix-proxy.service - Zabbix Proxy"
+        echo "     Loaded: loaded (/lib/systemd/system/zabbix-proxy.service; $en)"
+        echo "     Active: inactive (dead)"
+    fi
+    echo
+    tail -n 10 "$(logfile)" 2>/dev/null
+    running
+}
+
+cmd=$1; svc=${2%.service}
+case "$cmd" in
+    daemon-reload) exit 0 ;;
+    ""|-h|--help) echo "uso (lab): systemctl {start|stop|restart|status|enable|disable|is-active|is-enabled} zabbix-proxy"; exit 0 ;;
+esac
+if [ "$svc" != "zabbix-proxy" ]; then
+    echo "Unit ${2:-?}.service could not be found. (lab: so o servico zabbix-proxy e simulado)" >&2
+    exit 5
+fi
+
+case "$cmd" in
+    start)      do_start ;;
+    stop)       do_stop ;;
+    restart)    do_stop && do_start ;;
+    status)     do_status ;;
+    is-active)  if running; then echo active; else echo inactive; exit 3; fi ;;
+    is-enabled) if enabled; then echo enabled; else echo disabled; exit 1; fi ;;
+    enable)     need_root enable; mkdir -p "$STATE"; touch "$STATE/zabbix-proxy.enabled"
+                echo "Created symlink /etc/systemd/system/multi-user.target.wants/zabbix-proxy.service → /lib/systemd/system/zabbix-proxy.service." ;;
+    disable)    need_root disable; rm -f "$STATE/zabbix-proxy.enabled"
+                echo "Removed /etc/systemd/system/multi-user.target.wants/zabbix-proxy.service." ;;
+    *)          echo "lab: comando '$cmd' nao simulado" >&2; exit 1 ;;
+esac
