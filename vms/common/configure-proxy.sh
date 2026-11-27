@@ -15,6 +15,13 @@ sed -i \
 sed -i "/^# ProxyMode=/a ProxyMode=${MODE}" "$CONF"
 grep -q "^ProxyMode=" "$CONF" || echo "ProxyMode=${MODE}" >> "$CONF"
 
+# O systemctl simulado precisa vencer o systemctl real (se o systemd veio
+# como dependencia). No RHEL/Oracle o sudo nao tem /usr/local/bin no PATH.
+if [ -e /usr/bin/systemctl ] && [ ! -L /usr/bin/systemctl ]; then
+    mv /usr/bin/systemctl /usr/bin/systemctl.real
+fi
+ln -sf /usr/local/bin/systemctl /usr/bin/systemctl
+
 mkdir -p /var/lib/zabbix /var/lib/lab-systemctl
 chown zabbix:zabbix /var/lib/zabbix
 touch /var/lib/lab-systemctl/zabbix-proxy.enabled
